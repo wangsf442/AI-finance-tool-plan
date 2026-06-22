@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI财务测算工具（方案组版）</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .card { background: white; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); padding: 20px; margin-bottom: 20px; }
+        .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; padding: 20px; }
+        .metric-value { font-size: 2rem; font-weight: 700; }
+        .input-field { width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; }
+        .btn-primary { background-color: #2563eb; color: white; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+        .btn-primary:hover { background-color: #1d4ed8; }
+        .text-profit { color: #16a34a; }
+        .text-loss { color: #dc2626; }
+        .table-cell { padding: 12px 16px; text-align: left; }
+        #chatContainer { height: 360px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; background-color: #f9fafb; }
+        .chat-message { margin-bottom: 12px; }
+        .chat-user { font-weight: 600; color: #1f2937; }
+        .chat-ai { font-weight: 600; color: #2563eb; }
+        .chat-text { margin-top: 4px; color: #374151; white-space: pre-wrap; }
+        .api-config { background-color: #f0f9ff; border-left: 4px solid #2563eb; }
+        .pkg-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 0.5fr; gap: 6px; align-items: center; margin-bottom: 4px; }
+        .pkg-row input, .pkg-row select { width: 100%; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9rem; }
+        .pkg-row .del-btn { background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; padding: 4px 8px; }
+        .pkg-header { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 0.5fr; gap: 6px; font-weight: bold; font-size: 0.75rem; color: #4b5563; margin-bottom: 4px; }
+        .pkg-header span { text-align: left; }
+    </style>
+</head>
+<body class="p-6">
+
+<div class="max-w-7xl mx-auto">
+    <div class="card mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">📊 AI财务测算工具（方案组版）</h1>
+        <p class="text-gray-600 mt-2">支持多套餐方案组，基于 XGBoost/KNN 混合模型预测复充率与成本</p>
+        <p class="text-xs text-red-500 mt-1">⚠️ AI 顾问需自行填写 API Key；预测功能默认使用前端 KNN（无需后端），也可配置后端 API</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- 左侧输入区 -->
+        <div class="lg:col-span-1 space-y-6">
+            <div class="card">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">📦 方案组套餐列表</h2>
+                <div class="flex gap-2 mb-2">
+                    <button onclick="addPackageRow()" class="btn-primary text-sm py-1">+ 添加套餐</button>
+                    <button onclick="importExcel()" class="btn-primary text-sm py-1" style="background:#059669;">📂 导入 Excel</button>
+                    <button onclick="clearAllPackages()" class="btn-primary text-sm py-1" style="background:#6b7280;">清空</button>
+                </div>
+                <div id="packageTable" class="mb-2">
+                    <div class="pkg-header">
+                        <span>平台</span><span>价格(元)</span><span>流量(GB)</span><span>类型</span><span>种类</span><span>周期(天)</span><span>操作</span>
+                    </div>
+                    <div id="packageRows"></div>
+                </div>
+                <div class="text-xs text-gray-500">提示：至少添加 1 个套餐，所有套餐将作为同一方案组进行预测</div>
+                <div class="mt-2 flex gap-4 text-sm">
+                    <span>套餐数: <span id="pkgCount">0</span></span>
+                    <span>价格范围: <span id="priceRange">-</span></span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">1. 发货与成本</h2>
+                <div class="input-group mb-3">
+                    <label class="text-sm font-bold">总发货量 (台)</label>
+                    <input type="number" id="totalShipment" class="input-field" value="10000">
+                </div>
+                <div class="input-group mb-3">
+                    <label class="text-sm font-bold">测算周期 (月)</label>
+                    <input type="number" id="forecastMonths" class="input-field" value="18" onchange="updateMonths()">
+                </div>
+                <div class="input-group mb-3">
+                    <label class="text-sm font-bold">月租金 (元)</label>
+                    <input type="number" id="rent" class="input-field" value="20000">
+                </div>
+                <div class="input-group mb-3">
+                    <label class="text-sm font-bold">月工资 (元)</label>
+                    <input type="number" id="wage" class="input-field" value="200000">
+                </div>
+                <div class="input-group mb-3">
+                    <label class="text-sm font-bold">翻新成本 (元/月)</label>
+                    <input type="number" id="refurbCost" class="input-field" value="0">
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">2. 用户行为参数</h2>
+                <div class="input-group mb-3">
+                    <label class="text-sm font-bold">首充率 (%)</label>
+                    <input type="number" id="firstChargeRate" class="input-field" value="85">
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">3. 成本参数</h2>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div><label class="text-sm font-bold">硬件采购价 (元)</label><input type="number" id="hwCost" class="input-field" value="70"></div>
+                    <div><label class="text-sm font-bold">终端售价 (元)</label><input type="number" id="hwPrice" class="input-field" value="59"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div><label class="text-sm font-bold">单台推广费 (元)</label><input type="number" id="marketingCost" class="input-field" value="30"></div>
+                    <div><label class="text-sm font-bold">一退率 (%)</label><input type="number" id="return1" class="input-field" value="5"></div>
+                </div>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div><label class="text-sm font-bold">二/三退率 (%)</label><input type="number" id="return2" class="input-field" value="3"></div>
+                    <div><label class="text-sm font-bold">沉默率 (%)</label><input type="number" id="silenceRate" class="input-field" value="10"></div>
+                </div>
+                <button onclick="calculateAndPredict()" class="btn-primary w-full">开始测算</button>
+            </div>
+
+            <div class="card api-config">
+                <h2 class="text-xl font-bold text-gray-800 mb-4">4. AI 服务配置</h2>
+                <div class="mb-3">
+                    <label class="text-sm font-bold">预测 API 地址 (可选)</label>
+                    <input type="text" id="predictApiUrl" class="input-field" placeholder="http://localhost:5000/predict" value="">
+                    <span class="text-xs text-gray-500">留空则使用内置 KNN 预测</span>
+                </div>
+                <div class="mb-3">
+                    <label class="text-sm font-bold">聊天 API Key</label>
+                    <input type="password" id="apiKey" class="input-field" placeholder="sk-xxx">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div><label class="text-sm font-bold">聊天端点</label><input type="text" id="apiEndpoint" class="input-field" value="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"></div>
+                    <div><label class="text-sm font-bold">模型名称</label><input type="text" id="modelName" class="input-field" value="qwen-plus"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧结果区 -->
+        <div class="lg:col-span-2 space-y-6">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="metric-card"><div class="text-sm">单台沉没成本</div><div class="metric-value" id="sunkCost">-</div><div class="text-xs">元</div></div>
+                <div class="metric-card"><div class="text-sm">回本周期</div><div class="metric-value" id="paybackMonths">-</div><div class="text-xs">月</div></div>
+                <div class="metric-card"><div class="text-sm">ROI</div><div class="metric-value" id="roi">-</div><div class="text-xs">%</div></div>
+                <div class="metric-card"><div class="text-sm">累计现金流</div><div class="metric-value" id="cumulativeCash">-</div><div class="text-xs">万元</div></div>
+            </div>
+            <div class="card"><h3 class="text-lg font-bold mb-4">现金流趋势</h3><canvas id="cashFlowChart" height="100"></canvas></div>
+            <div class="card overflow-x-auto">
+                <h3 class="text-lg font-bold mb-4">月度明细</h3>
+                <table class="min-w-full text-sm">
+                    <thead class="bg-gray-50">
+                        <tr><th class="table-cell">月份</th><th class="table-cell">活跃用户</th><th class="table-cell">收入(万)</th><th class="table-cell">支出(万)</th><th class="table-cell">利润(万)</th><th class="table-cell">累计(万)</th></tr>
+                    </thead>
+                    <tbody id="resultTableBody"></tbody>
+                </table>
+                <p class="text-xs text-gray-500 mt-2">注：首月支出包含硬件净成本+固定成本+首月流量成本；第2月起支出仅含流量成本。</p>
+            </div>
+            <div class="card bg-gray-800 text-white">
+                <h3 class="text-lg font-bold mb-2">💡 AI 建议</h3>
+                <ul class="list-disc list-inside text-sm space-y-2" id="aiAdvice">
+                    <li>点击“开始测算”生成建议</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3 class="text-lg font-bold mb-2">🤖 AI 智能顾问</h3>
+                <div id="chatContainer" class="h-80 overflow-y-auto border rounded-lg p-3 mb-3 bg-gray-50">
+                    <div class="chat-message"><span class="chat-ai">AI 顾问:</span><div class="chat-text">您好！请配置 API Key 并点击“开始测算”。</div></div>
+                </div>
+                <div class="flex gap-2">
+                    <input type="text" id="chatInput" class="input-field flex-1" placeholder="例如：分析现金流压力">
+                    <button onclick="sendToAI()" class="btn-primary">发送</button>
+                    <button onclick="clearChatHistory()" class="btn-primary" style="background:#6b7280;">清空</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ======================== 全局变量 ========================
+    let cashFlowChart = null;
+    let currentResult = null;
+    let chatMessages = [];
+    let trainData = null;
+    let trainLoadError = null;
+
+    // ======================== 加载训练集数据 ========================
+    async function loadTrainData() {
+        try {
+            console.log('🔄 开始加载训练集数据...');
+            const [featuresResp, curvesResp] = await Promise.all([
+                fetch('train_features.json', { cache: 'no-cache' }),
+                fetch('train_curves.json', { cache: 'no-cache' })
+            ]);
+
+            if (!featuresResp.ok) {
+                const msg = `train_features.json 加载失败 (HTTP ${featuresResp.status})`;
+                console.error('❌ ' + msg);
+                trainLoadError = msg;
+                return false;
+            }
+            if (!curvesResp.ok) {
+                const msg = `train_curves.json 加载失败 (HTTP ${curvesResp.status})`;
+                console.error('❌ ' + msg);
+                trainLoadError = msg;
+                return false;
+            }
+
+            let features, curves;
+            try {
+                features = await featuresResp.json();
+                curves = await curvesResp.json();
+            } catch (e) {
+                const msg = 'JSON 解析失败: ' + e.message;
+                console.error('❌ ' + msg);
+                trainLoadError = msg;
+                return false;
+            }
+
+            if (!Array.isArray(features) || !Array.isArray(curves)) {
+                const msg = 'JSON 格式错误：不是数组';
+                console.error('❌ ' + msg);
+                trainLoadError = msg;
+                return false;
+            }
+            if (features.length === 0) {
+                const msg = 'train_features.json 为空数组';
+                console.error('❌ ' + msg);
+                trainLoadError = msg;
+                return false;
+            }
+            if (features.length !== curves.length) {
+                const msg = `数据长度不匹配: features=${features.length}, curves=${curves.length}`;
+                console.error('❌ ' + msg);
+                trainLoadError = msg;
+                return false;
+            }
+
+            trainData = { features, curves };
+            console.log(`✅ 训练集加载成功，样本数: ${features.length}`);
+            trainLoadError = null;
+            return true;
+        } catch (e) {
+            const msg = '加载过程中出现异常: ' + e.message;
+            console.error('❌ ' + msg);
+            trainLoadError = msg;
+            return false;
+        }
+    }
+
+    // ======================== 方案组套餐管理 ========================
+    function addPackageRow(platform='抖音', price=59, data_gb=100, type='月包', category='主套餐', period_days=30) {
+        const rowId = Date.now() + '_' + Math.random();
+        const rowHtml = `
+            <div class="pkg-row" id="pkg_${rowId}">
+                <select class="pkg-platform">
+                    <option value="抖音" ${platform=='抖音'?'selected':''}>抖音</option>
+                    <option value="天猫" ${platform=='天猫'?'selected':''}>天猫</option>
+                    <option value="京东" ${platform=='京东'?'selected':''}>京东</option>
+                    <option value="拼多多" ${platform=='拼多多'?'selected':''}>拼多多</option>
+                    <option value="快手" ${platform=='快手'?'selected':''}>快手</option>
+                    <option value="淘宝" ${platform=='淘宝'?'selected':''}>淘宝</option>
+                </select>
+                <input type="number" class="pkg-price" value="${price}" step="0.01">
+                <input type="number" class="pkg-data" value="${data_gb}" step="1">
+                <select class="pkg-type">
+                    <option value="月包" ${type=='月包'?'selected':''}>月包</option>
+                    <option value="长周期" ${type=='长周期'?'selected':''}>长周期</option>
+                </select>
+                <select class="pkg-category">
+                    <option value="主套餐" ${category=='主套餐'?'selected':''}>主套餐</option>
+                    <option value="体验套餐" ${category=='体验套餐'?'selected':''}>体验套餐</option>
+                    <option value="加油包" ${category=='加油包'?'selected':''}>加油包</option>
+                </select>
+                <input type="number" class="pkg-period" value="${period_days}" step="1">
+                <button class="del-btn" onclick="removePackageRow('${rowId}')">✕</button>
+            </div>
+        `;
+        document.getElementById('packageRows').insertAdjacentHTML('beforeend', rowHtml);
+        updatePackageCount();
+    }
+
+    function removePackageRow(id) {
+        const el = document.getElementById('pkg_'+id);
+        if (el) el.remove();
+        updatePackageCount();
+    }
+
+    function clearAllPackages() {
+        document.getElementById('packageRows').innerHTML = '';
+        updatePackageCount();
+    }
+
+    function updatePackageCount() {
+        const rows = document.querySelectorAll('#packageRows .pkg-row');
+        document.getElementById('pkgCount').innerText = rows.length;
+        if (rows.length === 0) {
+            document.getElementById('priceRange').innerText = '-';
+            return;
+        }
+        const prices = Array.from(rows).map(row => {
+            const el = row.querySelector('.pkg-price');
+            if (!el) return 0;
+            return parseFloat(el.value) || 0;
+        });
+        const min = Math.min(...prices);
+        const max = Math.max(...prices);
+        document.getElementById('priceRange').innerText = `${min} ~ ${max}`;
+    }
+
+    // ======================== 导入 Excel（优化版） ========================
+    function importExcel() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.xlsx,.xls';
+        input.onchange = function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(loadEvent) {
+                try {
+                    const data = new Uint8Array(loadEvent.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const json = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+                    if (json.length === 0) { alert('Excel 为空'); return; }
+
+                    // 获取表头并清洗（去空格、括号、单位）
+                    const headers = Object.keys(json[0]).map(h => h.trim());
+                    // 定义字段别名映射（按优先级排序）
+                    const fieldMap = {
+                        'platform': ['platform', '平台'],
+                        'price': ['price', '价格'],
+                        'data_gb': ['data_gb', '流量'],
+                        'type': ['type', '类型', '套餐类型'],
+                        'category': ['category', '种类', '套餐种类'],
+                        'period_days': ['period_days', '周期', '套餐周期']
+                    };
+                    // 对每个标准字段，尝试匹配表头
+                    const colMap = {};
+                    for (const [key, aliases] of Object.entries(fieldMap)) {
+                        let found = null;
+                        for (const h of headers) {
+                            // 去除可能的后缀如 "(元)", "(GB)" 等
+                            const cleanH = h.replace(/[（(].*?[）)]/g, '').trim().toLowerCase();
+                            for (const alias of aliases) {
+                                if (cleanH === alias.toLowerCase()) {
+                                    found = h;
+                                    break;
+                                }
+                            }
+                            if (found) break;
+                            // 如果精确匹配失败，尝试包含匹配
+                            for (const alias of aliases) {
+                                if (cleanH.includes(alias.toLowerCase()) || alias.toLowerCase().includes(cleanH)) {
+                                    found = h;
+                                    break;
+                                }
+                            }
+                            if (found) break;
+                        }
+                        colMap[key] = found || null;
+                    }
+
+                    // 清空现有行
+                    document.getElementById('packageRows').innerHTML = '';
+                    let html = '';
+                    json.forEach((row, idx) => {
+                        // 跳过全空行
+                        if (Object.values(row).every(v => v === '' || v === undefined)) return;
+
+                        const platform = colMap['platform'] ? row[colMap['platform']] : '抖音';
+                        const price = colMap['price'] ? parseFloat(row[colMap['price']]) : 59;
+                        const data_gb = colMap['data_gb'] ? parseFloat(row[colMap['data_gb']]) : 100;
+                        const type = colMap['type'] ? row[colMap['type']] : '月包';
+                        const category = colMap['category'] ? row[colMap['category']] : '主套餐';
+                        const period = colMap['period_days'] ? parseFloat(row[colMap['period_days']]) : 30;
+
+                        const rowId = Date.now() + '_' + idx + '_' + Math.random();
+                        html += `
+                            <div class="pkg-row" id="pkg_${rowId}">
+                                <select class="pkg-platform">
+                                    <option value="抖音" ${platform=='抖音'?'selected':''}>抖音</option>
+                                    <option value="天猫" ${platform=='天猫'?'selected':''}>天猫</option>
+                                    <option value="京东" ${platform=='京东'?'selected':''}>京东</option>
+                                    <option value="拼多多" ${platform=='拼多多'?'selected':''}>拼多多</option>
+                                    <option value="快手" ${platform=='快手'?'selected':''}>快手</option>
+                                    <option value="淘宝" ${platform=='淘宝'?'selected':''}>淘宝</option>
+                                </select>
+                                <input type="number" class="pkg-price" value="${price}" step="0.01">
+                                <input type="number" class="pkg-data" value="${data_gb}" step="1">
+                                <select class="pkg-type">
+                                    <option value="月包" ${type=='月包'?'selected':''}>月包</option>
+                                    <option value="长周期" ${type=='长周期'?'selected':''}>长周期</option>
+                                </select>
+                                <select class="pkg-category">
+                                    <option value="主套餐" ${category=='主套餐'?'selected':''}>主套餐</option>
+                                    <option value="体验套餐" ${category=='体验套餐'?'selected':''}>体验套餐</option>
+                                    <option value="加油包" ${category=='加油包'?'selected':''}>加油包</option>
+                                </select>
+                                <input type="number" class="pkg-period" value="${period}" step="1">
+                                <button class="del-btn" onclick="removePackageRow('${rowId}')">✕</button>
+                            </div>
+                        `;
+                    });
+                    document.getElementById('packageRows').innerHTML = html;
+                    updatePackageCount();
+                    // 自动触发测算
+                    calculateAndPredict();
+                } catch(err) {
+                    alert('导入失败: ' + err.message);
+                    console.error(err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        };
+        input.click();
+    }
+
+    // ======================== 计算方案组 21 维特征 ========================
+    function computeGroupFeatures() {
+        const rows = document.querySelectorAll('#packageRows .pkg-row');
+        if (rows.length === 0) {
+            alert('请至少添加一个套餐');
+            return null;
+        }
+        const packages = Array.from(rows).map(row => ({
+            platform: row.querySelector('.pkg-platform').value,
+            price: parseFloat(row.querySelector('.pkg-price').value) || 0,
+            data_gb: parseFloat(row.querySelector('.pkg-data').value) || 0,
+            type: row.querySelector('.pkg-type').value,
+            category: row.querySelector('.pkg-category').value,
+            period_days: parseFloat(row.querySelector('.pkg-period').value) || 0,
+        }));
+
+        const n = packages.length;
+        const prices = packages.map(p => p.price);
+        const data_gbs = packages.map(p => p.data_gb);
+        const periods = packages.map(p => p.period_days);
+        const types = packages.map(p => p.type);
+        const categories = packages.map(p => p.category);
+
+        const price_mean = prices.reduce((a,b)=>a+b,0) / n;
+        const price_std = Math.sqrt(prices.reduce((a,b)=>a+(b-price_mean)**2,0) / n) || 0;
+        const price_min = Math.min(...prices);
+        const price_max = Math.max(...prices);
+        const sortedPrices = [...prices].sort((a,b)=>a-b);
+        const price_median = sortedPrices[Math.floor(n/2)];
+        const price_q25 = sortedPrices[Math.floor(n*0.25)];
+        const price_q75 = sortedPrices[Math.floor(n*0.75)];
+        const price_skew = n > 2 ? (prices.reduce((a,b)=>a+(b-price_mean)**3,0) / n) / (price_std**3 + 1e-9) : 0;
+
+        const data_mean = data_gbs.reduce((a,b)=>a+b,0) / n;
+        const data_std = Math.sqrt(data_gbs.reduce((a,b)=>a+(b-data_mean)**2,0) / n) || 0;
+        const data_min = Math.min(...data_gbs);
+        const data_max = Math.max(...data_gbs);
+
+        const period_mean = periods.reduce((a,b)=>a+b,0) / n;
+        const period_std = Math.sqrt(periods.reduce((a,b)=>a+(b-period_mean)**2,0) / n) || 0;
+
+        const month_pkg_ratio = types.filter(t => t === '月包').length / n;
+        const main_ratio = categories.filter(c => c === '主套餐').length / n;
+        const exp_ratio = categories.filter(c => c === '体验套餐').length / n;
+        const temp_ratio = categories.filter(c => c === '加油包').length / n;
+
+        const corr = (arr1, arr2) => {
+            if (arr1.length < 2) return 0;
+            const m1 = arr1.reduce((a,b)=>a+b,0)/arr1.length;
+            const m2 = arr2.reduce((a,b)=>a+b,0)/arr2.length;
+            const num = arr1.reduce((s,x,i)=>s+(x-m1)*(arr2[i]-m2),0);
+            const den1 = Math.sqrt(arr1.reduce((s,x)=>s+(x-m1)**2,0));
+            const den2 = Math.sqrt(arr2.reduce((s,x)=>s+(x-m2)**2,0));
+            if (den1===0 || den2===0) return 0;
+            return num / (den1*den2);
+        };
+        const price_data_corr = corr(prices, data_gbs);
+        const price_period_corr = corr(prices, periods);
+
+        return [
+            n,
+            price_mean, price_std, price_min, price_max,
+            price_median, price_q25, price_q75, price_skew,
+            data_mean, data_std, data_min, data_max,
+            period_mean, period_std,
+            month_pkg_ratio,
+            main_ratio, exp_ratio, temp_ratio,
+            price_data_corr, price_period_corr
+        ];
+    }
+
+    // ======================== 前端 KNN 预测 ========================
+    function knnPredict(features, kList=[3,5,7]) {
+        if (!trainData) {
+            console.warn('KNN 预测失败：trainData 为空，原因:', trainLoadError);
+            return null;
+        }
+        const { features: trainFeats, curves: trainCurves } = trainData;
+        const weights = [1.0, 0.8, 0.5, 1.0, 0.3, 0.3, 0.2, 0.2, 0.2, 1.2, 1.5,
+                         0.5, 0.5, 0.5, 0.5, 0.3, 0.3, 0.3, 0.3, 0.2, 0.2];
+        const distances = trainFeats.map((tf, idx) => {
+            let d = 0;
+            for (let i=0; i<features.length; i++) {
+                d += weights[i] * (features[i] - tf[i])**2;
+            }
+            return { dist: Math.sqrt(d), idx };
+        });
+        distances.sort((a,b) => a.dist - b.dist);
+
+        const predRates = new Array(17).fill(0);
+        const predCosts = new Array(17).fill(0);
+        for (let k of kList) {
+            const top = distances.slice(0, k);
+            let sumW = 0;
+            const rateSum = new Array(17).fill(0);
+            const costSum = new Array(17).fill(0);
+            for (let item of top) {
+                const w = 1.0 / (item.dist + 1e-9);
+                sumW += w;
+                const curve = trainCurves[item.idx];
+                for (let t=0; t<17; t++) {
+                    rateSum[t] += w * curve.repurchase_rate[t];
+                    costSum[t] += w * curve.avg_monthly_cost[t];
+                }
+            }
+            for (let t=0; t<17; t++) {
+                predRates[t] += rateSum[t] / sumW;
+                predCosts[t] += costSum[t] / sumW;
+            }
+        }
+        for (let t=0; t<17; t++) {
+            predRates[t] /= kList.length;
+            predCosts[t] /= kList.length;
+        }
+        return { repurchase_rate: predRates, avg_monthly_cost: predCosts, source: '前端 KNN' };
+    }
+
+    // ======================== 调用后端 API ========================
+    async function fetchApiPrediction(features) {
+        const url = document.getElementById('predictApiUrl').value.trim();
+        if (!url) return null;
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ features }),
+                signal: AbortSignal.timeout(5000)
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (data.repurchase_rates && data.avg_costs && data.repurchase_rates.length===17 && data.avg_costs.length===17) {
+                return { repurchase_rate: data.repurchase_rates, avg_monthly_cost: data.avg_costs, source: '后端 API' };
+            }
+            return null;
+        } catch(e) {
+            console.warn('API 调用失败:', e.message);
+            return null;
+        }
+    }
+
+    // ======================== 主测算函数 ========================
+    async function calculateAndPredict() {
+        const features = computeGroupFeatures();
+        if (!features) return;
+
+        let pred = await fetchApiPrediction(features);
+        if (!pred) {
+            pred = knnPredict(features);
+            if (!pred) {
+                let errorMsg = '预测失败：';
+                if (trainLoadError) {
+                    errorMsg += '\n' + trainLoadError;
+                } else {
+                    errorMsg += '\n请配置后端 API 或确保训练数据已加载 (train_features.json 和 train_curves.json)';
+                }
+                alert(errorMsg);
+                return;
+            }
+        }
+        console.log('预测来源:', pred.source);
+
+        const repurchaseRates = pred.repurchase_rate;
+        const trafficCosts = pred.avg_monthly_cost;
+
+        const months = parseInt(document.getElementById('forecastMonths').value) || 18;
+        let repRates = repurchaseRates.slice(0, months-1);
+        if (repRates.length < months-1) repRates.push(...new Array(months-1 - repRates.length).fill(0));
+        let trafficSeq = trafficCosts.slice(0, months-1);
+        if (trafficSeq.length < months-1) trafficSeq.push(...new Array(months-1 - trafficSeq.length).fill(0));
+
+        const totalShipment = parseInt(document.getElementById('totalShipment').value);
+        const hwCost = parseFloat(document.getElementById('hwCost').value);
+        const hwPrice = parseFloat(document.getElementById('hwPrice').value);
+        const marketingCost = parseFloat(document.getElementById('marketingCost').value);
+        const rent = parseFloat(document.getElementById('rent').value);
+        const wage = parseFloat(document.getElementById('wage').value);
+        const firstChargeRate = parseFloat(document.getElementById('firstChargeRate').value) / 100;
+        const refurbCost = parseFloat(document.getElementById('refurbCost').value);
+
+        const rows = document.querySelectorAll('#packageRows .pkg-row');
+        const prices = Array.from(rows).map(row => parseFloat(row.querySelector('.pkg-price').value) || 0);
+        const avgPrice = prices.reduce((a,b)=>a+b,0) / (prices.length || 1);
+
+        const hardwareNetCost = totalShipment * (hwCost + marketingCost - hwPrice);
+        const monthlyFixedCost = rent + wage + refurbCost;
+
+        let activeUsers = new Array(months).fill(0);
+        let revenue = new Array(months).fill(0);
+        activeUsers[0] = totalShipment * firstChargeRate;
+        revenue[0] = activeUsers[0] * avgPrice;
+        for (let i=1; i<months; i++) {
+            const repRate = repRates[i-1];
+            activeUsers[i] = totalShipment * firstChargeRate * repRate;
+            revenue[i] = activeUsers[i] * avgPrice;
+        }
+
+        let expense = new Array(months).fill(0);
+        for (let i=0; i<months; i++) {
+            let trafficTotal = 0;
+            if (i === 0) {
+                trafficTotal = activeUsers[i] * (trafficSeq[0] || 0);
+                expense[i] = hardwareNetCost + monthlyFixedCost + trafficTotal;
+            } else {
+                trafficTotal = activeUsers[i] * (trafficSeq[i-1] || 0);
+                expense[i] = trafficTotal;
+            }
+        }
+
+        let profit = new Array(months).fill(0);
+        let cumulative = 0;
+        let cumulativeHistory = [];
+        for (let i=0; i<months; i++) {
+            profit[i] = revenue[i] - expense[i];
+            cumulative += profit[i];
+            cumulativeHistory.push(cumulative);
+        }
+
+        const totalRevenue = revenue.reduce((a,b)=>a+b,0);
+        const totalExpense = expense.reduce((a,b)=>a+b,0);
+        const totalProfit = totalRevenue - totalExpense;
+        const roi = totalExpense === 0 ? 0 : (totalProfit / totalExpense) * 100;
+        let payback = -1;
+        let cum = 0;
+        for (let i=0; i<months; i++) {
+            cum += profit[i];
+            if (cum >= 0 && payback === -1) payback = i+1;
+        }
+        const sunkCost = (hwCost + marketingCost - hwPrice) > 0 ? (hwCost+marketingCost-hwPrice) : 0;
+
+        const monthlyDetails = [];
+        for (let i=0; i<months; i++) {
+            monthlyDetails.push({
+                month: i+1,
+                activeUsers: Math.floor(activeUsers[i]),
+                revenue: revenue[i],
+                expense: expense[i],
+                profit: profit[i],
+                cumulative: cumulativeHistory[i]
+            });
+        }
+
+        currentResult = {
+            sunk_cost: sunkCost,
+            payback_months: payback>0 ? payback : months+1,
+            roi: roi,
+            cumulative_cash: cumulative,
+            max_monthly_loss: Math.min(...profit),
+            monthly_details: monthlyDetails,
+            monthly_profit: profit,
+            monthly_revenue: revenue,
+            cumulative_cash_history: cumulativeHistory,
+            active_users: monthlyDetails.map(d => d.activeUsers),
+            monthly_expense: expense
+        };
+        displayResult(currentResult, months);
+    }
+
+    // ======================== 显示结果 ========================
+    function displayResult(data, months) {
+        document.getElementById('sunkCost').innerText = data.sunk_cost.toFixed(2);
+        document.getElementById('paybackMonths').innerText = data.payback_months;
+        document.getElementById('roi').innerText = data.roi.toFixed(1);
+        document.getElementById('cumulativeCash').innerText = (data.cumulative_cash/10000).toFixed(1);
+        const tbody = document.getElementById('resultTableBody');
+        tbody.innerHTML = '';
+        for (let i=0; i<months; i++) {
+            const profitClass = data.monthly_profit[i] >= 0 ? 'text-profit' : 'text-loss';
+            tbody.innerHTML += `<tr class="border-b">
+                <td class="table-cell">M${i+1}</td>
+                <td class="table-cell">${data.active_users[i]}</td>
+                <td class="table-cell">¥${(data.monthly_revenue[i]/10000).toFixed(1)}万</td>
+                <td class="table-cell">¥${(data.monthly_expense[i]/10000).toFixed(1)}万</td>
+                <td class="table-cell font-bold ${profitClass}">¥${(data.monthly_profit[i]/10000).toFixed(1)}万</td>
+                <td class="table-cell font-bold">¥${(data.cumulative_cash_history[i]/10000).toFixed(1)}万</td>
+            </tr>`;
+        }
+        if (cashFlowChart) cashFlowChart.destroy();
+        const ctx = document.getElementById('cashFlowChart').getContext('2d');
+        cashFlowChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: Array.from({length:months}, (_,i)=>`M${i+1}`),
+                datasets: [
+                    { label:'累计现金流', data:data.cumulative_cash_history, borderColor:'#2563eb', fill:true },
+                    { label:'月利润', data:data.monthly_profit, borderColor:'#10b981', borderDash:[5,5], fill:false }
+                ]
+            },
+            options: { responsive: true }
+        });
+        const advice = [];
+        if (data.payback_months > 12) advice.push("⚠️ 回本周期超过12个月，建议优化推广策略或降低成本。");
+        if (data.roi < 30) advice.push("📉 ROI偏低，需提升用户复充率或提高套餐定价。");
+        if (data.max_monthly_loss < -50000) advice.push("💰 前几月亏损较大，可考虑减少初期发货量或降低硬件成本。");
+        if (advice.length === 0) advice.push("✅ 财务指标良好，建议持续监控复充率和流量成本变化。");
+        document.getElementById('aiAdvice').innerHTML = advice.map(a => `<li>${a}</li>`).join('');
+    }
+
+    // ======================== AI 聊天 ========================
+    function formatFinancialContext(result) {
+        if (!result) return "暂无财务数据。";
+        let text = `当前财务测算结果：\n- 回本周期：${result.payback_months}个月\n- ROI：${result.roi.toFixed(1)}%\n- 累计现金流：${(result.cumulative_cash/10000).toFixed(2)}万元\n- 最大单月亏损：${result.max_monthly_loss.toFixed(0)}元\n\n月度明细（元）：\n月份\t活跃用户\t收入\t支出\t利润\t累计\n`;
+        for (let d of result.monthly_details) {
+            text += `${d.month}\t${d.activeUsers}\t${d.revenue.toFixed(0)}\t${d.expense.toFixed(0)}\t${d.profit.toFixed(0)}\t${d.cumulative.toFixed(0)}\n`;
+        }
+        return text;
+    }
+
+    async function sendToAI() {
+        const apiKey = document.getElementById('apiKey').value.trim();
+        if (!apiKey) { alert("请填写 API Key"); return; }
+        const endpoint = document.getElementById('apiEndpoint').value.trim();
+        const model = document.getElementById('modelName').value.trim();
+        const question = document.getElementById('chatInput').value.trim();
+        if (!question) return;
+        const container = document.getElementById('chatContainer');
+        container.innerHTML += `<div class="chat-message"><span class="chat-user">您:</span><div class="chat-text">${escapeHtml(question)}</div></div>`;
+        document.getElementById('chatInput').value = '';
+        container.scrollTop = container.scrollHeight;
+
+        const loadingId = "loading_" + Date.now();
+        container.innerHTML += `<div id="${loadingId}" class="chat-message"><span class="chat-ai">AI 顾问:</span><div class="chat-text">分析中...</div></div>`;
+        container.scrollTop = container.scrollHeight;
+
+        try {
+            const messages = [
+                { role: "system", content: "你是随身WiFi财务顾问，基于用户提供的财务数据给出专业建议，要求条理清晰、数据驱动。" },
+                ...chatMessages,
+                { role: "user", content: `${formatFinancialContext(currentResult)}\n用户问题：${question}` }
+            ];
+            const resp = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: 2048 })
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const reply = data.choices?.[0]?.message?.content || "无法获取回复。";
+            document.getElementById(loadingId)?.remove();
+            container.innerHTML += `<div class="chat-message"><span class="chat-ai">AI 顾问:</span><div class="chat-text">${reply.replace(/\n/g, '<br>')}</div></div>`;
+            chatMessages.push({ role: "user", content: question }, { role: "assistant", content: reply });
+            if (chatMessages.length > 20) chatMessages = chatMessages.slice(-20);
+        } catch (err) {
+            document.getElementById(loadingId)?.remove();
+            container.innerHTML += `<div class="chat-message"><span class="chat-ai">AI 顾问:</span><div class="chat-text">调用失败：${err.message}</div></div>`;
+        }
+        container.scrollTop = container.scrollHeight;
+    }
+
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[m]));
+    }
+    function clearChatHistory() {
+        chatMessages = [];
+        document.getElementById('chatContainer').innerHTML = '<div class="chat-message"><span class="chat-ai">AI 顾问:</span><div class="chat-text">对话已清空。</div></div>';
+    }
+    function updateMonths() { calculateAndPredict(); }
+
+    // ======================== 初始化 ========================
+    window.onload = async function() {
+        await loadTrainData();
+        if (!trainData) {
+            console.warn('⚠️ 训练数据加载失败，KNN 将不可用。错误原因:', trainLoadError);
+        }
+        // 添加示例套餐
+        addPackageRow('抖音', 59, 100, '月包', '主套餐', 30);
+        addPackageRow('抖音', 79, 200, '月包', '主套餐', 30);
+        updatePackageCount();
+        await calculateAndPredict();
+    };
+</script>
+</body>
+</html>
